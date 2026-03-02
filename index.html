@@ -21,6 +21,87 @@
     const protocol = new Protocol();
     maplibregl.addProtocol('pmtiles', protocol.tile);
 
+    // ── Tile / quadkey math ────────────────────────────────────────────────
+
+    function lngToTileX(lng, z) {
+      return Math.floor((lng + 180) / 360 * Math.pow(2, z));
+    }
+
+    function latToTileY(lat, z) {
+      const r = lat * Math.PI / 180;
+      return Math.floor(
+        (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z)
+      );
+    }
+
+    function tileYToLat(y, z) {
+      const n = Math.PI - (2 * Math.PI * y) / Math.pow(2, z);
+      return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+    }
+
+    function tileToBBox(x, y, z) {
+      const n = Math.pow(2, z);
+      return [
+        x / n * 360 - 180,          // west
+        tileYToLat(y + 1, z),       // south
+        (x + 1) / n * 360 - 180,   // east
+        tileYToLat(y, z)            // north
+      ];
+    }
+
+    function tileToQuadkey(x, y, z) {
+      let key = '';
+      for (let i = z; i > 0; i--) {
+        let digit = 0;
+        const mask = 1 << (i - 1);
+        if (x & mask) digit += 1;
+        if (y & mask) digit += 2;
+        key += digit;
+      }
+      return key;
+    }
+
+    // ── Quadkey grid overlay ───────────────────────────────────────────────
+
+    // Pick the quadkey zoom so ~4 tiles span the viewport width.
+    // From: 360 / 2^Z ≈ viewportWidth / 4  →  Z ≈ log2(1440 / viewportWidth)
+    function getGridZoom(map) {
+      const bounds = map.getBounds();
+      let width = bounds.getEast() - bounds.getWest();
+      if (width <= 0) width += 360;
+      width = Math.min(width, 360);
+      return Math.max(1, Math.min(28, Math.round(Math.log2(1440 / width))));
+    }
+
+    function buildQKGrid(map) {
+      const z       = getGridZoom(map);
+      const maxIdx  = Math.pow(2, z) - 1;
+      const bounds  = map.getBounds();
+      const sw      = bounds.getSouthWest();
+      const ne      = bounds.getNorthEast();
+
+      const xMin = Math.max(0,      lngToTileX(Math.max(-180,    sw.lng), z));
+      const xMax = Math.min(maxIdx, lngToTileX(Math.min(179.999, ne.lng), z));
+      const yMin = Math.max(0,      latToTileY(Math.min( 85.051, ne.lat), z));
+      const yMax = Math.min(maxIdx, latToTileY(Math.max(-85.051, sw.lat), z));
+
+      const features = [];
+      for (let x = xMin; x <= xMax; x++) {
+        for (let y = yMin; y <= yMax; y++) {
+          const [west, south, east, north] = tileToBBox(x, y, z);
+          features.push({
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[[west, north], [east, north], [east, south], [west, south], [west, north]]]
+            },
+            properties: { qk: tileToQuadkey(x, y, z) }
+          });
+        }
+      }
+      return { type: 'FeatureCollection', features };
+    }
+
     const OVERTURE_RELEASE = '2025-12-17';
     const OVERTURE_URL = `https://overturemaps-tiles-us-west-2-beta.s3.amazonaws.com/${OVERTURE_RELEASE}`;
     const ATTR = '© <a href="https://overturemaps.org">Overture Maps Foundation</a>';
@@ -165,6 +246,50 @@
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+
+    // ── Wire up quadkey grid after map loads ──────────────────────────────
+
+    map.on('load', () => {
+      map.addSource('qk-grid', {
+        type: 'geojson',
+        data: buildQKGrid(map)
+      });
+
+      // Tile outline strokes
+      map.addLayer({
+        id: 'qk-grid-lines',
+        type: 'line',
+        source: 'qk-grid',
+        paint: {
+          'line-color': 'rgba(220, 60, 60, 0.55)',
+          'line-width': 1.5
+        }
+      });
+
+      // Quadkey string labels at tile centers
+      map.addLayer({
+        id: 'qk-grid-labels',
+        type: 'symbol',
+        source: 'qk-grid',
+        layout: {
+          'text-field': ['get', 'qk'],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 12,
+          'text-anchor': 'center',
+          'text-allow-overlap': true,
+          'symbol-placement': 'point'
+        },
+        paint: {
+          'text-color': 'rgba(180, 30, 30, 0.95)',
+          'text-halo-color': 'rgba(255, 255, 255, 0.9)',
+          'text-halo-width': 2
+        }
+      });
+
+      map.on('moveend', () => {
+        map.getSource('qk-grid').setData(buildQKGrid(map));
+      });
+    });
   </script>
 </body>
 </html>
