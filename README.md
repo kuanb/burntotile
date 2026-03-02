@@ -33,7 +33,8 @@ Pushing to `main` triggers the GitHub Actions workflow (`.github/workflows/deplo
 |---|---|
 | Map renderer | [MapLibre GL JS v4](https://maplibre.org/) |
 | Tile format | [PMTiles v3](https://docs.protomaps.com/pmtiles/) |
-| Basemap data | [Overture Maps Foundation](https://overturemaps.org/) (2025-12-17 release) |
-| Fonts/glyphs | [Protomaps CDN](https://docs.protomaps.com/basemaps/downloads#font-cdn) |
+| Basemap data | [Protomaps](https://protomaps.com/) public demo tiles (OpenStreetMap) |
+| Basemap style | [protomaps-themes-base](https://github.com/protomaps/basemaps) "light" theme |
+| Fonts/glyphs | [Protomaps basemaps-assets](https://github.com/protomaps/basemaps-assets) |
 
 No bundler, no npm — all dependencies loaded from CDN.
