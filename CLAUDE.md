@@ -14,7 +14,7 @@ No build step — the project is a single `index.html`. Run locally with:
 python -m http.server
 ```
 
-Deploy to GitHub Pages via the gh-pages branch (GitHub Actions workflow in `.github/workflows/deploy.yml`).
+Deploy to GitHub Pages via `.github/workflows/deploy.yml` (push to `main` triggers it). Ensure the repo's Pages setting uses **GitHub Actions** as the source.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ Everything lives in `index.html`. The file is structured as one `<script type="m
 - **Map setup** — MapLibre GL v4 with PMTiles protocol; Overture Maps Foundation tiles (2025-12-17 release) as three sources: `ov-base`, `ov-transport`, `ov-buildings`.
 - **Quadkey grid overlay** — GeoJSON source (`qk-grid`) rebuilt on every `moveend`. Grid zoom is calculated so ~4 quadkeys span the viewport width at any zoom: `Z = round(log2(1440 / viewportWidthDegrees))`, clamped 1–28.
 - **Left panel** — drag-and-drop / click-to-pick GeoJSON; zoom dropdown (2–28); clear button; output textarea (click-to-copy).
-- **Burn logic** — `burnGeoJSON(geojson, z)` converts any GeoJSON geometry type to a deduplicated array of quadkey strings at zoom `z`. FeatureCollection processes all features. Tile coverage uses a recursive tile-split approach.
+- **Burn logic** — `burnGeoJSON(geojson, z)` converts any GeoJSON geometry type to a deduplicated, sorted array of quadkey strings at zoom `z`. FeatureCollection processes all features. Polygon coverage uses `ringIntersectsTile` (vertex-in-bbox + corner-in-ring + edge-crossing). LineString coverage uses Bresenham's line traversal with recursive subdivision for long segments. Points map directly to a single tile. 500k-tile guard prevents runaway burns.
 - **Error modal** — centered red/white overlay for validation and burn errors.
 
 ## Key CDN dependencies
