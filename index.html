@@ -368,6 +368,252 @@
 
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
 
+    // ── GeoJSON validation ────────────────────────────────────────────────
+
+    const VALID_GEOJSON_TYPES = new Set([
+      'Point','MultiPoint','LineString','MultiLineString',
+      'Polygon','MultiPolygon','GeometryCollection',
+      'Feature','FeatureCollection'
+    ]);
+
+    function validateGeoJSON(gj) {
+      if (!gj || typeof gj !== 'object') throw new Error('Not a valid JSON object.');
+      if (!gj.type) throw new Error('Missing "type" property.');
+      if (!VALID_GEOJSON_TYPES.has(gj.type)) throw new Error(`Unknown GeoJSON type: "${gj.type}".`);
+      if (gj.type === 'Feature') {
+        if (!gj.geometry) throw new Error('Feature has null or missing geometry.');
+        validateGeoJSON(gj.geometry);
+      }
+      if (gj.type === 'FeatureCollection') {
+        if (!Array.isArray(gj.features)) throw new Error('FeatureCollection missing features array.');
+        for (const f of gj.features) validateGeoJSON(f);
+      }
+    }
+
+    // ── Intersection helpers ──────────────────────────────────────────────
+
+    // Check if point p=[lng,lat] is inside bbox [west,south,east,north]
+    function ptInBBox(bbox, p) {
+      return p[0] >= bbox[0] && p[0] <= bbox[2] && p[1] >= bbox[1] && p[1] <= bbox[3];
+    }
+
+    // Ray-casting point-in-ring test
+    function ptInRing(ring, p) {
+      const [x, y] = p;
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i], [xj, yj] = ring[j];
+        if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+          inside = !inside;
+        }
+      }
+      return inside;
+    }
+
+    // Strict segment-segment intersection (open endpoints)
+    function segsIntersect(a1, a2, b1, b2) {
+      const dx1 = a2[0]-a1[0], dy1 = a2[1]-a1[1];
+      const dx2 = b2[0]-b1[0], dy2 = b2[1]-b1[1];
+      const den = dx1*dy2 - dy1*dx2;
+      if (Math.abs(den) < 1e-12) return false;
+      const t = ((b1[0]-a1[0])*dy2 - (b1[1]-a1[1])*dx2) / den;
+      const u = ((b1[0]-a1[0])*dy1 - (b1[1]-a1[1])*dx1) / den;
+      return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+    }
+
+    // Does a polygon ring intersect tile bbox [west,south,east,north]?
+    function ringIntersectsTile(ring, bbox) {
+      const [west, south, east, north] = bbox;
+      const tileCorners = [[west,south],[east,south],[east,north],[west,north]];
+      const tileEdges   = [
+        [[west,south],[east,south]], [[east,south],[east,north]],
+        [[east,north],[west,north]], [[west,north],[west,south]]
+      ];
+
+      for (const pt of ring)         if (ptInBBox(bbox, pt))        return true;
+      for (const pt of tileCorners)  if (ptInRing(ring, pt))        return true;
+      for (let i = 0; i < ring.length - 1; i++) {
+        for (const [b1,b2] of tileEdges) {
+          if (segsIntersect(ring[i], ring[i+1], b1, b2)) return true;
+        }
+      }
+      return false;
+    }
+
+    // ── Per-geometry coverage ─────────────────────────────────────────────
+
+    function pointCoverage(coord, z) {
+      const x = lngToTileX(coord[0], z);
+      const y = latToTileY(coord[1], z);
+      return [tileToQuadkey(x, y, z)];
+    }
+
+    // Bresenham line traversal through tile grid (with recursive subdivision
+    // for long segments to correct for Mercator distortion).
+    function* segCoverage(lng0, lat0, lng1, lat1, z) {
+      const nMax = Math.pow(2, z) - 1;
+      const x0 = Math.min(nMax, Math.max(0, lngToTileX(lng0, z)));
+      const y0 = Math.min(nMax, Math.max(0, latToTileY(lat0, z)));
+      const x1 = Math.min(nMax, Math.max(0, lngToTileX(lng1, z)));
+      const y1 = Math.min(nMax, Math.max(0, latToTileY(lat1, z)));
+
+      // Subdivide long segments so Mercator distortion doesn't cause gaps
+      if (Math.abs(x1-x0) > 32 || Math.abs(y1-y0) > 32) {
+        const mLng = (lng0+lng1)/2, mLat = (lat0+lat1)/2;
+        yield* segCoverage(lng0, lat0, mLng, mLat, z);
+        yield* segCoverage(mLng, mLat, lng1, lat1, z);
+        return;
+      }
+
+      yield tileToQuadkey(x0, y0, z);
+      if (x0 === x1 && y0 === y1) return;
+
+      const dx = Math.abs(x1-x0), dy = Math.abs(y1-y0);
+      const sx = x0 < x1 ? 1 : -1,  sy = y0 < y1 ? 1 : -1;
+      let err = dx - dy, x = x0, y = y0;
+      while (x !== x1 || y !== y1) {
+        const e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 <  dx) { err += dx; y += sy; }
+        yield tileToQuadkey(x, y, z);
+      }
+    }
+
+    function lineStringCoverage(coords, z) {
+      const s = new Set();
+      for (let i = 0; i < coords.length - 1; i++) {
+        for (const qk of segCoverage(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1], z)) {
+          s.add(qk);
+        }
+      }
+      return [...s];
+    }
+
+    function polygonCoverage(coordinates, z) {
+      const outer = coordinates[0];
+      const lngs  = outer.map(p => p[0]);
+      const lats  = outer.map(p => p[1]);
+      const nMax  = Math.pow(2, z) - 1;
+
+      const xMin = Math.max(0,    lngToTileX(Math.min(...lngs), z));
+      const xMax = Math.min(nMax, lngToTileX(Math.max(...lngs), z));
+      const yMin = Math.max(0,    latToTileY(Math.min( 85.051, Math.max(...lats)), z));
+      const yMax = Math.min(nMax, latToTileY(Math.max(-85.051, Math.min(...lats)), z));
+
+      const estimated = (xMax - xMin + 1) * (yMax - yMin + 1);
+      if (estimated > 500_000) {
+        throw new Error(
+          `Bounding box at Z${z} would cover ~${estimated.toLocaleString()} tiles. ` +
+          'Try a lower zoom level.'
+        );
+      }
+
+      const s = new Set();
+      for (let x = xMin; x <= xMax; x++) {
+        for (let y = yMin; y <= yMax; y++) {
+          if (ringIntersectsTile(outer, tileToBBox(x, y, z))) {
+            s.add(tileToQuadkey(x, y, z));
+          }
+        }
+      }
+      return [...s];
+    }
+
+    function geomCoverage(geom, z) {
+      switch (geom.type) {
+        case 'Point':           return pointCoverage(geom.coordinates, z);
+        case 'MultiPoint':      return geom.coordinates.flatMap(c => pointCoverage(c, z));
+        case 'LineString':      return lineStringCoverage(geom.coordinates, z);
+        case 'MultiLineString': return geom.coordinates.flatMap(c => lineStringCoverage(c, z));
+        case 'Polygon':         return polygonCoverage(geom.coordinates, z);
+        case 'MultiPolygon':    return geom.coordinates.flatMap(c => polygonCoverage(c, z));
+        case 'GeometryCollection':
+          return geom.geometries.flatMap(g => geomCoverage(g, z));
+        default:
+          throw new Error(`Unsupported geometry type: "${geom.type}".`);
+      }
+    }
+
+    // Returns a sorted, deduplicated array of quadkey strings.
+    function burnGeoJSON(gj, z) {
+      validateGeoJSON(gj);
+      const all = new Set();
+      const add = geom => { if (geom) geomCoverage(geom, z).forEach(qk => all.add(qk)); };
+
+      if (gj.type === 'FeatureCollection') gj.features.forEach(f => add(f.geometry));
+      else if (gj.type === 'Feature')      add(gj.geometry);
+      else                                 add(gj);
+
+      return [...all].sort();
+    }
+
+    // ── Bbox helper (for map fit) ─────────────────────────────────────────
+
+    function computeBBox(gj) {
+      const b = [Infinity, Infinity, -Infinity, -Infinity];
+      const pt = c => {
+        b[0] = Math.min(b[0], c[0]); b[1] = Math.min(b[1], c[1]);
+        b[2] = Math.max(b[2], c[0]); b[3] = Math.max(b[3], c[1]);
+      };
+      function walk(c, d) {
+        if (d === 0) { pt(c); return; }
+        for (const x of c) walk(x, d - 1);
+      }
+      const depths = {Point:0,MultiPoint:1,LineString:1,MultiLineString:2,
+                      Polygon:2,MultiPolygon:3};
+      function geom(g) {
+        if (!g) return;
+        if (g.type === 'GeometryCollection') { g.geometries.forEach(geom); return; }
+        if (depths[g.type] !== undefined) walk(g.coordinates, depths[g.type]);
+      }
+      if      (gj.type === 'FeatureCollection') gj.features.forEach(f => geom(f.geometry));
+      else if (gj.type === 'Feature')           geom(gj.geometry);
+      else                                       geom(gj);
+      return b;
+    }
+
+    // ── Burn + display ────────────────────────────────────────────────────
+
+    function displayGeoJSONOnMap(geojson) {
+      if (map.getLayer('burned-fill'))    map.removeLayer('burned-fill');
+      if (map.getLayer('burned-line'))    map.removeLayer('burned-line');
+      if (map.getSource('burned-geojson')) map.removeSource('burned-geojson');
+
+      map.addSource('burned-geojson', { type: 'geojson', data: geojson });
+      map.addLayer({
+        id: 'burned-fill', type: 'fill', source: 'burned-geojson',
+        paint: { 'fill-color': '#2471a3', 'fill-opacity': 0.18 }
+      }, 'qk-grid-lines');
+      map.addLayer({
+        id: 'burned-line', type: 'line', source: 'burned-geojson',
+        paint: { 'line-color': '#2471a3', 'line-width': 1.5 }
+      }, 'qk-grid-lines');
+
+      const bb = computeBBox(geojson);
+      if (bb[0] !== Infinity) {
+        map.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]], { padding: 60, maxZoom: 15 });
+      }
+    }
+
+    function performBurn() {
+      if (!panelState.geojson) return;
+      const z = parseInt(zoomSelect.value, 10);
+      let keys;
+      try {
+        keys = burnGeoJSON(panelState.geojson, z);
+      } catch (err) {
+        showError(err.message);
+        return;
+      }
+      if (keys.length === 0) {
+        showError('No quadkeys generated — the geometry may be empty or outside valid bounds.');
+        return;
+      }
+      showResults(keys);
+      const label = keys.length === 1 ? '1 quadkey' : `${keys.length.toLocaleString()} quadkeys`;
+      dropZone.querySelector('strong').textContent = `${label} at Z${z}`;
+    }
+
     // ── Panel: state ─────────────────────────────────────────────────────
 
     let panelState = {
@@ -447,8 +693,6 @@
     }
 
     function onGeoJSONLoaded(text, filename) {
-      // Parsing + validation happens in burnGeoJSON (Phase 4).
-      // For now, just store and acknowledge.
       let parsed;
       try {
         parsed = JSON.parse(text);
@@ -456,13 +700,24 @@
         showError(`JSON parse error: ${err.message}`);
         return;
       }
+      try {
+        validateGeoJSON(parsed);
+      } catch (err) {
+        showError(`Invalid GeoJSON: ${err.message}`);
+        return;
+      }
       panelState.geojson = parsed;
       dropZone.querySelector('strong').textContent = filename || 'GeoJSON loaded';
+      displayGeoJSONOnMap(parsed);
+      performBurn();
     }
 
     // ── Panel: clear button ───────────────────────────────────────────────
 
     clearBtn.addEventListener('click', clearPanel);
+
+    // Re-burn when zoom level changes (if GeoJSON is already loaded)
+    zoomSelect.addEventListener('change', performBurn);
 
     // ── Panel: click-to-copy ──────────────────────────────────────────────
 
