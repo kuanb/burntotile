@@ -10,10 +10,131 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; }
     #map { width: 100%; height: 100%; }
+
+    /* ── Left panel ─────────────────────────────────────────────────────── */
+    #panel {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      width: 260px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 10;
+      font-family: system-ui, sans-serif;
+      font-size: 13px;
+    }
+
+    /* Drop zone */
+    #drop-zone {
+      background: rgba(255,255,255,0.92);
+      border: 2px dashed #aaa;
+      border-radius: 6px;
+      padding: 14px 10px;
+      text-align: center;
+      cursor: pointer;
+      color: #555;
+      line-height: 1.4;
+      transition: border-color 0.15s, background 0.15s;
+      user-select: none;
+    }
+    #drop-zone:hover,
+    #drop-zone.drag-over {
+      border-color: #dc3c3c;
+      background: rgba(255,240,240,0.96);
+      color: #b01010;
+    }
+    #drop-zone strong { display: block; font-size: 14px; margin-bottom: 4px; }
+
+    /* Controls row: zoom dropdown + clear button */
+    #controls {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    #controls label {
+      white-space: nowrap;
+      color: #333;
+      background: rgba(255,255,255,0.88);
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+    #zoom-select {
+      flex: 1;
+      padding: 4px 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: white;
+      font-size: 13px;
+    }
+    #clear-btn {
+      padding: 4px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: white;
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+      transition: background 0.1s;
+    }
+    #clear-btn:hover { background: #f0e8e8; border-color: #c44; color: #c00; }
+
+    /* Output section */
+    #output-section { display: none; flex-direction: column; gap: 4px; }
+    #output-section.visible { display: flex; }
+    #output-hint {
+      color: #555;
+      font-size: 11px;
+      background: rgba(255,255,255,0.7);
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+    #output-box {
+      background: rgba(255,255,255,0.92);
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 8px;
+      font-family: monospace;
+      font-size: 11px;
+      height: 160px;
+      overflow-y: auto;
+      white-space: pre;
+      cursor: pointer;
+      line-height: 1.5;
+      color: #222;
+      transition: background 0.15s;
+    }
+    #output-box:hover { background: rgba(240, 250, 240, 0.96); }
+    #output-box.copied {
+      background: rgba(200, 240, 200, 0.96);
+      border-color: #5a5;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
+
+  <!-- Left panel -->
+  <div id="panel">
+    <div id="drop-zone" tabindex="0" role="button" aria-label="Drop GeoJSON or click to open file picker">
+      <strong>Drop GeoJSON here</strong>
+      or click to browse
+    </div>
+
+    <div id="controls">
+      <label for="zoom-select">QK zoom</label>
+      <select id="zoom-select"></select>
+      <button id="clear-btn">Clear</button>
+    </div>
+
+    <div id="output-section">
+      <div id="output-hint">Click the box to copy all quadkeys</div>
+      <div id="output-box" role="button" tabindex="0" aria-label="Quadkey results — click to copy"></div>
+    </div>
+  </div>
+
+  <!-- Hidden file input -->
+  <input type="file" id="file-input" accept=".json,.geojson" style="display:none">
 
   <script type="module">
     import { Protocol } from 'https://unpkg.com/pmtiles@3/dist/pmtiles.js';
@@ -246,6 +367,148 @@
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+
+    // ── Panel: state ─────────────────────────────────────────────────────
+
+    let panelState = {
+      geojson: null,   // parsed GeoJSON currently loaded
+      results: []      // array of quadkey strings from last burn
+    };
+
+    // ── Panel: DOM refs ───────────────────────────────────────────────────
+
+    const dropZone     = document.getElementById('drop-zone');
+    const zoomSelect   = document.getElementById('zoom-select');
+    const clearBtn     = document.getElementById('clear-btn');
+    const outputSection = document.getElementById('output-section');
+    const outputBox    = document.getElementById('output-box');
+    const fileInput    = document.getElementById('file-input');
+
+    // Populate zoom dropdown 2–28
+    for (let z = 2; z <= 28; z++) {
+      const opt = document.createElement('option');
+      opt.value = z;
+      opt.textContent = `Z${z}`;
+      if (z === 12) opt.selected = true;
+      zoomSelect.appendChild(opt);
+    }
+
+    // ── Panel: helpers ────────────────────────────────────────────────────
+
+    function showResults(keys) {
+      panelState.results = keys;
+      outputBox.textContent = keys.join('\n');
+      outputSection.classList.add('visible');
+    }
+
+    function clearPanel() {
+      panelState.geojson = null;
+      panelState.results = [];
+      outputSection.classList.remove('visible');
+      outputBox.textContent = '';
+      outputBox.classList.remove('copied');
+      dropZone.querySelector('strong').textContent = 'Drop GeoJSON here';
+
+      // Remove any burned geometry layer
+      if (map.getLayer('burned-fill'))   map.removeLayer('burned-fill');
+      if (map.getLayer('burned-line'))   map.removeLayer('burned-line');
+      if (map.getSource('burned-geojson')) map.removeSource('burned-geojson');
+    }
+
+    // ── Panel: drag-and-drop + file picker ────────────────────────────────
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') fileInput.click();
+    });
+
+    fileInput.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (file) handleFile(file);
+      fileInput.value = '';
+    });
+
+    dropZone.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    });
+
+    function handleFile(file) {
+      const reader = new FileReader();
+      reader.onload = ev => onGeoJSONLoaded(ev.target.result, file.name);
+      reader.readAsText(file);
+    }
+
+    function onGeoJSONLoaded(text, filename) {
+      // Parsing + validation happens in burnGeoJSON (Phase 4).
+      // For now, just store and acknowledge.
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch (err) {
+        showError(`JSON parse error: ${err.message}`);
+        return;
+      }
+      panelState.geojson = parsed;
+      dropZone.querySelector('strong').textContent = filename || 'GeoJSON loaded';
+    }
+
+    // ── Panel: clear button ───────────────────────────────────────────────
+
+    clearBtn.addEventListener('click', clearPanel);
+
+    // ── Panel: click-to-copy ──────────────────────────────────────────────
+
+    outputBox.addEventListener('click', () => {
+      if (!panelState.results.length) return;
+      navigator.clipboard.writeText(panelState.results.join('\n')).then(() => {
+        outputBox.classList.add('copied');
+        setTimeout(() => outputBox.classList.remove('copied'), 1200);
+      });
+    });
+    outputBox.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') outputBox.click();
+    });
+
+    // ── Error modal (stub — wired up in Phase 4) ──────────────────────────
+
+    function showError(msg) {
+      // eslint-disable-next-line no-console
+      console.error('[burntotile]', msg);
+      let modal = document.getElementById('error-modal');
+      if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'error-modal';
+        Object.assign(modal.style, {
+          position: 'fixed', inset: '0', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: '9999',
+          background: 'rgba(0,0,0,0.35)'
+        });
+        document.body.appendChild(modal);
+      }
+      modal.innerHTML = `
+        <div style="background:#c0392b;color:#fff;padding:24px 28px;border-radius:8px;
+                    max-width:420px;font-family:system-ui,sans-serif;line-height:1.5;
+                    box-shadow:0 4px 24px rgba(0,0,0,0.4)">
+          <strong style="display:block;font-size:15px;margin-bottom:8px">Error</strong>
+          <span>${msg}</span>
+          <div style="text-align:right;margin-top:16px">
+            <button onclick="this.closest('#error-modal').remove()"
+              style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.4);
+                     padding:6px 16px;border-radius:4px;cursor:pointer;font-size:13px">
+              Dismiss
+            </button>
+          </div>
+        </div>`;
+      modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    }
 
     // ── Wire up quadkey grid after map loads ──────────────────────────────
 
