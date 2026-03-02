@@ -289,10 +289,10 @@
               ['==', ['get', 'subtype'], 'road'],
               ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], true, false]
             ],
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
             paint: {
               'line-color': '#c8a840',
-              'line-width': ['interpolate', ['linear'], ['zoom'], 7, 3, 12, 9, 18, 22],
-              'line-cap': 'round', 'line-join': 'round'
+              'line-width': ['interpolate', ['linear'], ['zoom'], 7, 3, 12, 9, 18, 22]
             }
           },
           // Primary roads — fill
@@ -306,10 +306,10 @@
               ['==', ['get', 'subtype'], 'road'],
               ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], true, false]
             ],
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
             paint: {
               'line-color': '#fce08a',
-              'line-width': ['interpolate', ['linear'], ['zoom'], 7, 2, 12, 6, 18, 16],
-              'line-cap': 'round', 'line-join': 'round'
+              'line-width': ['interpolate', ['linear'], ['zoom'], 7, 2, 12, 6, 18, 16]
             }
           },
           // Secondary / tertiary roads
@@ -323,10 +323,10 @@
               ['==', ['get', 'subtype'], 'road'],
               ['match', ['get', 'class'], ['secondary', 'tertiary'], true, false]
             ],
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
             paint: {
               'line-color': '#ffffff',
-              'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 5, 18, 12],
-              'line-cap': 'round', 'line-join': 'round'
+              'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 5, 18, 12]
             }
           },
           // Minor / residential roads
@@ -342,10 +342,10 @@
                 ['residential', 'service', 'unclassified', 'living_street', 'pedestrian', 'track'],
                 true, false]
             ],
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
             paint: {
               'line-color': '#ffffff',
-              'line-width': ['interpolate', ['linear'], ['zoom'], 13, 1, 18, 8],
-              'line-cap': 'round', 'line-join': 'round'
+              'line-width': ['interpolate', ['linear'], ['zoom'], 13, 1, 18, 8]
             }
           },
           // Buildings
