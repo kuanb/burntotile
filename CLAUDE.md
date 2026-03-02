@@ -31,7 +31,7 @@ Everything lives in `index.html`. The file is structured as one `<script type="m
 | Library | CDN |
 |---|---|
 | MapLibre GL v4 | `https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.{js,css}` |
-| PMTiles v3 | `https://unpkg.com/pmtiles@3/dist/pmtiles.js` (ES module) |
+| PMTiles v3 | `https://esm.sh/pmtiles@3` (unpkg serves CJS; use esm.sh for browser ESM) |
 
 ## Overture tile layer names (source-layer values)
 

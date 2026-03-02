@@ -137,7 +137,7 @@
   <input type="file" id="file-input" accept=".json,.geojson" style="display:none">
 
   <script type="module">
-    import { Protocol } from 'https://unpkg.com/pmtiles@3/dist/pmtiles.js';
+    import { Protocol } from 'https://esm.sh/pmtiles@3';
 
     const protocol = new Protocol();
     maplibregl.addProtocol('pmtiles', protocol.tile);
