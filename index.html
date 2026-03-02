@@ -136,13 +136,7 @@
   <!-- Hidden file input -->
   <input type="file" id="file-input" accept=".json,.geojson" style="display:none">
 
-  <script type="module">
-    import { Protocol } from 'https://esm.sh/pmtiles@3';
-    import { layersWithConfig } from 'https://esm.sh/protomaps-themes-base@4';
-
-    const protocol = new Protocol();
-    maplibregl.addProtocol('pmtiles', protocol.tile);
-
+  <script>
     // ── Tile / quadkey math ────────────────────────────────────────────────
 
     function lngToTileX(lng, z) {
@@ -224,23 +218,24 @@
       return { type: 'FeatureCollection', features };
     }
 
-    const PMTILES_URL = 'pmtiles://https://demo-bucket.protomaps.com/v4.pmtiles';
-    const ATTR = '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>';
-
     const map = new maplibregl.Map({
       container: 'map',
       style: {
         version: 8,
         glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
-        sprite: 'https://protomaps.github.io/basemaps-assets/sprites/v4/light',
         sources: {
-          protomaps: {
-            type: 'vector',
-            url: PMTILES_URL,
-            attribution: ATTR
+          'carto-light': {
+            type: 'raster',
+            tiles: [
+              'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+              'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+              'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>'
           }
         },
-        layers: layersWithConfig('protomaps', { theme: 'light' })
+        layers: [{ id: 'carto-light-tiles', type: 'raster', source: 'carto-light' }]
       },
       center: [0, 20],
       zoom: 2

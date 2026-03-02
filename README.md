@@ -32,9 +32,7 @@ Pushing to `main` triggers the GitHub Actions workflow (`.github/workflows/deplo
 | Layer | Library |
 |---|---|
 | Map renderer | [MapLibre GL JS v4](https://maplibre.org/) |
-| Tile format | [PMTiles v3](https://docs.protomaps.com/pmtiles/) |
-| Basemap data | [Protomaps](https://protomaps.com/) public demo tiles (OpenStreetMap) |
-| Basemap style | [protomaps-themes-base](https://github.com/protomaps/basemaps) "light" theme |
+| Basemap | [CARTO Light](https://carto.com/basemaps/) raster tiles (free, no API key) |
 | Fonts/glyphs | [Protomaps basemaps-assets](https://github.com/protomaps/basemaps-assets) |
 
 No bundler, no npm — all dependencies loaded from CDN.
