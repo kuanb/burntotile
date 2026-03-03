@@ -79,6 +79,22 @@
     }
     #clear-btn:hover { background: #f0e8e8; border-color: #c44; color: #c00; }
 
+    /* Merge toggle */
+    #merge-row {
+      background: rgba(255,255,255,0.88);
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 5px 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      color: #333;
+    }
+    #merge-row:hover { background: rgba(255,255,255,0.96); border-color: #aaa; }
+    #merge-toggle { cursor: pointer; margin: 0; }
+
     /* Output section */
     #output-section { display: none; flex-direction: column; gap: 4px; }
     #output-section.visible { display: flex; }
@@ -126,6 +142,11 @@
       <select id="zoom-select"></select>
       <button id="clear-btn">Clear</button>
     </div>
+
+    <label id="merge-row" for="merge-toggle">
+      <input type="checkbox" id="merge-toggle">
+      Merge adjacent quadkeys (≥ Z3)
+    </label>
 
     <div id="output-section">
       <div id="output-hint">Click the box to copy all quadkeys</div>
@@ -452,6 +473,34 @@
       return [...all].sort();
     }
 
+    // ── Quadkey compaction ────────────────────────────────────────────────
+    // Repeatedly replace complete sibling groups (all 4 children of a parent)
+    // with their parent tile, down to a floor of floorZoom (min key length).
+
+    function compactQuadkeys(keys, floorZoom = 3) {
+      const set = new Set(keys);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        // Count how many children each parent tile has in the set.
+        const childCount = new Map();
+        for (const qk of set) {
+          if (qk.length <= floorZoom) continue; // at floor, cannot merge further
+          const parent = qk.slice(0, -1);
+          childCount.set(parent, (childCount.get(parent) || 0) + 1);
+        }
+        // Any parent with all 4 children present → merge.
+        for (const [parent, count] of childCount) {
+          if (count === 4) {
+            for (const d of ['0', '1', '2', '3']) set.delete(parent + d);
+            set.add(parent);
+            changed = true;
+          }
+        }
+      }
+      return [...set].sort();
+    }
+
     // ── Bbox helper (for map fit) ─────────────────────────────────────────
 
     function computeBBox(gj) {
@@ -514,9 +563,11 @@
         showError('No quadkeys generated — the geometry may be empty or outside valid bounds.');
         return;
       }
+      if (mergeToggle.checked) keys = compactQuadkeys(keys, 3);
       showResults(keys);
       const label = keys.length === 1 ? '1 quadkey' : `${keys.length.toLocaleString()} quadkeys`;
-      dropZone.querySelector('strong').textContent = `${label} at Z${z}`;
+      const suffix = mergeToggle.checked ? ` (merged)` : ` at Z${z}`;
+      dropZone.querySelector('strong').textContent = `${label}${suffix}`;
     }
 
     // ── Panel: state ─────────────────────────────────────────────────────
@@ -528,12 +579,13 @@
 
     // ── Panel: DOM refs ───────────────────────────────────────────────────
 
-    const dropZone     = document.getElementById('drop-zone');
-    const zoomSelect   = document.getElementById('zoom-select');
-    const clearBtn     = document.getElementById('clear-btn');
+    const dropZone      = document.getElementById('drop-zone');
+    const zoomSelect    = document.getElementById('zoom-select');
+    const clearBtn      = document.getElementById('clear-btn');
+    const mergeToggle   = document.getElementById('merge-toggle');
     const outputSection = document.getElementById('output-section');
-    const outputBox    = document.getElementById('output-box');
-    const fileInput    = document.getElementById('file-input');
+    const outputBox     = document.getElementById('output-box');
+    const fileInput     = document.getElementById('file-input');
 
     // Populate zoom dropdown 2–28
     for (let z = 2; z <= 28; z++) {
@@ -627,8 +679,9 @@
 
     clearBtn.addEventListener('click', clearPanel);
 
-    // Re-burn when zoom level changes (if GeoJSON is already loaded)
+    // Re-burn when zoom level or merge toggle changes
     zoomSelect.addEventListener('change', performBurn);
+    mergeToggle.addEventListener('change', performBurn);
 
     // ── Panel: click-to-copy ──────────────────────────────────────────────
 
