@@ -177,6 +177,36 @@
       return key;
     }
 
+    function quadkeyToTile(qk) {
+      let x = 0, y = 0;
+      const z = qk.length;
+      for (let i = z; i > 0; i--) {
+        const mask = 1 << (i - 1);
+        const digit = +qk[z - i];
+        if (digit & 1) x |= mask;
+        if (digit & 2) y |= mask;
+      }
+      return { x, y, z };
+    }
+
+    function qkListToGeoJSON(keys) {
+      return {
+        type: 'FeatureCollection',
+        features: keys.map(qk => {
+          const { x, y, z } = quadkeyToTile(qk);
+          const [west, south, east, north] = tileToBBox(x, y, z);
+          return {
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[[west, north], [east, north], [east, south], [west, south], [west, north]]]
+            },
+            properties: { qk }
+          };
+        })
+      };
+    }
+
     // ── Quadkey grid overlay ───────────────────────────────────────────────
 
     // Pick the quadkey zoom so ~4 tiles span the viewport width.
@@ -520,6 +550,9 @@
       panelState.results = keys;
       outputBox.textContent = keys.join('\n');
       outputSection.classList.add('visible');
+      if (map.getSource('burned-qk')) {
+        map.getSource('burned-qk').setData(qkListToGeoJSON(keys));
+      }
     }
 
     function clearPanel() {
@@ -534,6 +567,9 @@
       if (map.getLayer('burned-fill'))   map.removeLayer('burned-fill');
       if (map.getLayer('burned-line'))   map.removeLayer('burned-line');
       if (map.getSource('burned-geojson')) map.removeSource('burned-geojson');
+      if (map.getSource('burned-qk')) {
+        map.getSource('burned-qk').setData({ type: 'FeatureCollection', features: [] });
+      }
     }
 
     // ── Panel: drag-and-drop + file picker ────────────────────────────────
@@ -643,6 +679,24 @@
     // ── Wire up quadkey grid after map loads ──────────────────────────────
 
     map.on('load', () => {
+      // ── Burned-quadkey coverage overlay ───────────────────────────────────
+      map.addSource('burned-qk', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+      map.addLayer({
+        id: 'burned-qk-fill',
+        type: 'fill',
+        source: 'burned-qk',
+        paint: { 'fill-color': '#3cb95a', 'fill-opacity': 0.15 }
+      });
+      map.addLayer({
+        id: 'burned-qk-outline',
+        type: 'line',
+        source: 'burned-qk',
+        paint: { 'line-color': '#2a9e48', 'line-width': 1, 'line-opacity': 0.5 }
+      });
+
       map.addSource('qk-grid', {
         type: 'geojson',
         data: buildQKGrid(map)
